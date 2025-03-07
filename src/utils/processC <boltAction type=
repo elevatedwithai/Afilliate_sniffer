@@ -1,0 +1,95 @@
+import { supabase } from '../lib/supabase';
+import { toast } from 'react-hot-toast';
+
+interface CsvTool {
+  name: string;
+  website: string;
+  [key: string]: any;
+}
+
+export async function processCsvData(csvData: CsvTool[]) {
+  const processedCount = {
+    success: 0,
+    error: 0,
+    total: csvData.length
+  };
+
+  const toastId = toast.loading(`Processing 0/${processedCount.total} tools...`);
+
+  for (let i = 0; i < csvData.length; i++) {
+    const tool = csvData[i];
+    
+    // Skip empty rows
+    if (!tool.name || !tool.website) {
+      processedCount.error++;
+      continue;
+    }
+    
+    // Normalize website URL
+    let websiteUrl = tool.website;
+    if (!websiteUrl.startsWith('http')) {
+      websiteUrl = `https://${websiteUrl}`;
+    }
+    
+    try {
+      // Check if the tool already exists
+      const { data: existingTools } = await supabase
+        .from('affiliate_links')
+        .select('id')
+        .eq('tool_name', tool.name)
+        .eq('website_url', websiteUrl);
+      
+      // Skip if the tool already exists
+      if (existingTools && existingTools.length > 0) {
+        toast.error(`Tool "${tool.name}" already exists, skipping`, { duration: 2000 });
+        processedCount.error++;
+        continue;
+      }
+      
+      // Insert the tool into the affiliate_links table
+      const { error } = await supabase
+        .from('affiliate_links')
+        .insert([
+          {
+            tool_name: tool.name,
+            website_url: websiteUrl,
+            status: 'Pending',
+            notes: 'Imported from CSV'
+          }
+        ]);
+      
+      if (error) {
+        console.error(`Error inserting tool ${tool.name}:`, error);
+        processedCount.error++;
+      } else {
+        processedCount.success++;
+      }
+    } catch (error) {
+      console.error(`Error processing ${tool.name}:`, error);
+      processedCount.error++;
+    }
+    
+    // Update the toast message every 5 tools or at the end
+    if (i % 5 === 0 || i === csvData.length - 1) {
+      toast.loading(
+        `Processing ${i + 1}/${processedCount.total} tools...`, 
+        { id: toastId }
+      );
+    }
+  }
+  
+  // Show final result
+  if (processedCount.error === 0) {
+    toast.success(
+      `Successfully imported all ${processedCount.success} tools!`, 
+      { id: toastId }
+    );
+  } else {
+    toast.error(
+      `Imported ${processedCount.success} tools with ${processedCount.error} errors`, 
+      { id: toastId }
+    );
+  }
+  
+  return processedCount;
+}
